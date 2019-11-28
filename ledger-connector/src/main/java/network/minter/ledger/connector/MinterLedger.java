@@ -27,6 +27,7 @@
 package network.minter.ledger.connector;
 
 import android.content.Context;
+import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 
 import java.io.IOException;
@@ -39,11 +40,15 @@ import network.minter.core.crypto.BytesData;
 import network.minter.core.crypto.MinterAddress;
 import network.minter.core.internal.helpers.StringHelper;
 import network.minter.ledger.connector.exceptions.ConnectionException;
-import network.minter.ledger.connector.exceptions.EmptyResponseException;
-import network.minter.ledger.connector.exceptions.ReadTimeoutException;
+import network.minter.ledger.connector.exceptions.ResponseException;
 import timber.log.Timber;
 
 public class MinterLedger extends LedgerNanoS {
+
+    /**
+     * Use -1 to infinite wait, but it's bad idea
+     */
+    public static int READ_TIMEOUT_SECONDS = 60;
 
     public enum Command {
         GetVersion(0x01, 0, 0),
@@ -63,10 +68,6 @@ public class MinterLedger extends LedgerNanoS {
     }
 
     public enum Status {
-        //const uint16_t CODE_SUCCESS = 0x9000;
-        //const uint16_t CODE_USER_REJECTED = 0x6985;
-        //const uint16_t CODE_INVALID_PARAM = 0x6b01;
-        //constexpr const uint16_t CODE_NO_STATUS_RESULT = CODE_SUCCESS + 1;
         Ok(0x9000),
         UserRejected(0x6985),
         InvalidParameter(0x6b01),
@@ -76,6 +77,8 @@ public class MinterLedger extends LedgerNanoS {
         InvalidResponse(0xFF03),
         ReadTimeout(0xFF04),
         CommonIOError(0xFF05),
+        DeviceError(0xFF06),
+        Canceled(0xFF07),
         ;
         short mValue;
 
@@ -102,18 +105,31 @@ public class MinterLedger extends LedgerNanoS {
         super(context, manager);
     }
 
-    public Pair<Status, SignatureSingleData> signTxHash(BytesData unsignedTxHash) {
+    public UsbDevice getDevice() {
+        return mDev;
+    }
+
+    public Pair<Status, SignatureSingleData> signTxHash(BytesData unsignedTxHash) throws ResponseException {
+        return signTxHash(0, unsignedTxHash);
+    }
+
+    public Pair<Status, SignatureSingleData> signTxHash(int deriveIndex, BytesData unsignedTxHash) throws ResponseException {
         final ExchangeResult result;
         try {
-            result = exchange(Command.SignHash, unsignedTxHash.getBytes());
+            BytesData tmp = new BytesData(unsignedTxHash.size() + 4);
+            tmp.write(0, deriveIndex);
+            tmp.write(4, unsignedTxHash);
+            result = exchange(Command.SignHash, tmp.getBytes());
         } catch (IOException e) {
-            notifyError(CODE_EXCHANGE_ERROR, e);
-            return null;
+            throw new ResponseException(e);
         }
 
-        if (result.data.size() == 0) {
-            notifyError(CODE_EMPTY_RESPONSE, null);
-            return null;
+        if (result == null) {
+            throw new ResponseException(MinterLedger.Status.EmptyResponse);
+        } else if (result.status != MinterLedger.Status.Ok) {
+            throw new ResponseException(result);
+        } else if (result.data == null || result.data.size() == 0) {
+            throw new ResponseException(result);
         }
 
         SignatureSingleData sig = new SignatureSingleData(
@@ -125,58 +141,58 @@ public class MinterLedger extends LedgerNanoS {
         return new Pair<>(result.status, sig);
     }
 
-    public Pair<Status, MinterAddress> getAddress() {
+    public Pair<Status, MinterAddress> getAddress() throws ResponseException {
         return getAddress(0, false);
     }
 
-    public Pair<Status, MinterAddress> getAddress(int deriveIndex, boolean silent) {
+    public Pair<Status, MinterAddress> getAddress(int deriveIndex, boolean silent) throws ResponseException {
         final ExchangeResult result;
         try {
             BytesData payload = new BytesData(4);
             payload.write(0, deriveIndex);
             result = exchange(silent ? Command.GetAddressSilent : Command.GetAddress, payload.getBytes());
         } catch (IOException e) {
-            notifyError(CODE_EXCHANGE_ERROR, e);
-            return null;
+            throw new ResponseException(e);
         }
 
-        if (result.data.size() == 0) {
-            notifyError(CODE_EMPTY_RESPONSE, null);
-            return null;
+        if (result == null) {
+            throw new ResponseException(MinterLedger.Status.EmptyResponse);
+        } else if (result.status != MinterLedger.Status.Ok) {
+            throw new ResponseException(result);
+        } else if (result.data == null || result.data.size() == 0) {
+            throw new ResponseException(result);
         }
 
         return new Pair<>(result.status, new MinterAddress(result.data.getData()));
     }
 
-    public Pair<Status, String> getVersion() {
-        final ExchangeResult response;
+    public Pair<Status, String> getVersion() throws ResponseException {
+        final ExchangeResult result;
         try {
-            response = exchange(Command.GetVersion, null);
+            result = exchange(Command.GetVersion, null);
         } catch (IOException e) {
-            notifyError(CODE_EXCHANGE_ERROR, e);
-            return null;
+            throw new ResponseException(e);
         }
 
-        if (response.data.size() == 0) {
-            notifyError(CODE_EMPTY_RESPONSE, null);
-            return null;
+        if (result == null) {
+            throw new ResponseException(MinterLedger.Status.EmptyResponse);
+        } else if (result.status != MinterLedger.Status.Ok) {
+            throw new ResponseException(result);
+        } else if (result.data == null || result.data.size() == 0) {
+            throw new ResponseException(result);
         }
 
-        dumpData(response.data);
+        dumpData(result.data);
 
-        char maj = response.data.at(0);
-        char min = response.data.at(1);
-        char pat = response.data.at(2);
+        char maj = result.data.at(0);
+        char min = result.data.at(1);
+        char pat = result.data.at(2);
 
         String vers = String.format(Locale.getDefault(), "%d.%d.%d", (int) maj, (int) min, (int) pat);
-        return new Pair<>(response.status, vers);
+        return new Pair<>(result.status, vers);
     }
 
     public ExchangeResult exchange(@NonNull Command command, byte[] payload) throws IOException {
-        return exchange(command, payload, 60);
-    }
-
-    public ExchangeResult exchange(@NonNull Command command, byte[] payload, long timeoutS) throws IOException {
         APDU apdu = new APDU(command.mIns, command.mP1, command.mP2, payload);
         Timber.d("Write APDU frame: %s", dumpData(apdu.getData()));
         try {
@@ -184,34 +200,21 @@ public class MinterLedger extends LedgerNanoS {
         } catch (ConnectionException e) {
             return new ExchangeResult(Status.ConnectionLost);
         }
-        BytesData resp;
+        BytesData buffer = new BytesData(0xFF);
 
-        resp = new BytesData(read());
+        short seqn = 0;
+        byte[] buf = new byte[64];
 
-        int wait = 0;
+        mLedgerIO.readWait(buf, READ_TIMEOUT_SECONDS);
+        Timber.d("Read frame[%d:%d]: %s", seqn, 64, dumpData(buf));
 
-        //todo read until responded data not equals data len
-        while (resp.size() == 0) {
-            try {
-                Thread.sleep(1000);
-            } catch (InterruptedException e) {
-                throw new ReadTimeoutException(e);
-            }
-            resp = new BytesData(read());
-            wait++;
-            if (wait == timeoutS) {
-                throw new ReadTimeoutException();
-            }
-        }
+        buffer.write(0, buf);
 
-        if (resp.size() == 0) {
-            throw new EmptyResponseException();
-        }
-
-        short channelId = resp.toUShortBigInt(0).shortValue();
-        char commandTag = resp.at(2);
-        short seqn = resp.toUShortBigInt(3).shortValue();
-
+        short channelId = buffer.toUShortBigInt(0).shortValue();
+        char commandTag = buffer.at(2);
+        seqn = buffer.toUShortBigInt(3).shortValue();
+        short commonDataLen = buffer.toUShortBigInt(5).shortValue();
+        int offset = 0;
         if (channelId != 0x0101) {
             throw new IOException(String.format("Unknown channel id %d", channelId));
         }
@@ -220,13 +223,32 @@ public class MinterLedger extends LedgerNanoS {
             throw new IOException("Response has invalid command id");
         }
 
-        resp.takeRangeFromMutable(5);
+        seqn++;
+
+        Timber.d("Needs to read more data? (%d * %d) < %d", seqn, 64, commonDataLen);
+
+        while ((seqn * 64) < commonDataLen) {
+            mLedgerIO.readWait(buf, READ_TIMEOUT_SECONDS);
+            seqn++;
+            Timber.d("Read frame[%d:%d]: %s", seqn, 64, dumpData(buf));
+            Timber.d("Needs to read more data? (%d * %d) < %d", seqn, 64, commonDataLen);
+            offset += buf.length;
+
+            buffer.write(offset, buf);
+
+        }
+
+        BytesData resp = new BytesData(seqn * 64 - (seqn * 5));
+        for (int i = 0; i < seqn; i++) {
+            resp.write(i * 59, buffer.takeRange((i * 64) + 5, 64 + (i * 64)));
+        }
 
         ExchangeResult result = new ExchangeResult();
 
         if (resp.size() >= 2) {
             //2 bytes - len, N data, 2 bytes status, length prefix does not include 2 bytes of status code
             short dataLen = (short) (resp.toUShortBigInt(0).shortValue() + 2);
+
             BytesData rawResp = new BytesData(resp.takeRangeTo(dataLen));
             BytesData statusResp = new BytesData(rawResp.takeRange(dataLen - 2, dataLen));
 

@@ -45,7 +45,23 @@ android {
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+        debug {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    flavorDimensions "env"
+
+    productFlavors {
+        // can't use name starts with 'test'
+        netMain {
+            dimension "env"
+        }
+        netTest {
+            dimension "env"
         }
     }
     compileOptions {
@@ -57,9 +73,21 @@ android {
 dependencies {
     implementation fileTree(dir: 'libs', include: ['*.jar'])
 
+    netTestImplementation project(path: ":ledger-connector")
+    netMainImplementation project(path: ":ledger-connector")
+    netTestImplementation project(path: ":ledger-rxjava2-connector")
+    netMainImplementation project(path: ":ledger-rxjava2-connector")
 
-    implementation "network.minter.android:ledger-connector:${connectorVers}"
-    implementation "network.minter.android:ledger-rxjava2-connector:${connectorVers}"
+    netMainImplementation "network.minter.android:minter-android-core:${minterCoreVers}"
+    netTestImplementation "network.minter.android:minter-android-core-testnet:${minterCoreVers}"
+    netMainImplementation "network.minter.android:minter-android-blockchain:${minterBlockchainVers}"
+    netTestImplementation "network.minter.android:minter-android-blockchain-testnet:${minterBlockchainVers}"
+
+
+//    netTestImplementation "network.minter.android:ledger-connector-testnet:${connectorVers}"
+//    netTestImplementation "network.minter.android:ledger-rxjava2-connector-testnet:${connectorVers}"
+//    netMainImplementation "network.minter.android:ledger-connector:${connectorVers}"
+//    netMainImplementation "network.minter.android:ledger-rxjava2-connector:${connectorVers}"
 
     implementation 'com.jakewharton.timber:timber:4.7.1'
 

@@ -50,6 +50,15 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@id/btnGetVersion" />
 
+    <Button
+        android:id="@+id/btnSign"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="Sign TX"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/btnGetAddress" />
+
     <ProgressBar
         android:id="@+id/progressBar"
         style="@android:style/Widget.Holo.ProgressBar.Horizontal"
@@ -107,7 +116,7 @@
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintLeft_toLeftOf="parent"
         app:layout_constraintRight_toRightOf="parent"
-        app:layout_constraintTop_toBottomOf="@id/btnGetAddress"
+        app:layout_constraintTop_toBottomOf="@id/btnSign"
         tools:layout_constraintBottom_creator="1"
         tools:layout_constraintLeft_creator="1"
         tools:layout_constraintRight_creator="1">

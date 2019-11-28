@@ -27,6 +27,7 @@
 package network.minter.ledger.connector.rxjava2;
 
 import android.content.Context;
+import android.hardware.usb.UsbDevice;
 import android.hardware.usb.UsbManager;
 
 import java.io.IOException;
@@ -35,7 +36,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.reactivex.Observable;
-import io.reactivex.ObservableOnSubscribe;
+import io.reactivex.Single;
+import io.reactivex.SingleOnSubscribe;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.Disposable;
 import io.reactivex.schedulers.Schedulers;
@@ -45,7 +47,9 @@ import network.minter.core.crypto.MinterAddress;
 import network.minter.ledger.connector.APDU;
 import network.minter.ledger.connector.LedgerNanoS;
 import network.minter.ledger.connector.MinterLedger;
-import network.minter.ledger.connector.exceptions.ReadTimeoutException;
+import network.minter.ledger.connector.exceptions.LedgerException;
+import network.minter.ledger.connector.exceptions.ResponseException;
+import timber.log.Timber;
 
 public class RxMinterLedger {
     private final static Object sSearchDispLock = new Object();
@@ -81,46 +85,96 @@ public class RxMinterLedger {
                             mHandle.search();
                         }
                     });
-
-
         }
     }
 
-    public Observable<MinterLedger.ExchangeResult> exchange(MinterLedger.Command command, byte[] payload) {
-        return Observable
-                .create((ObservableOnSubscribe<MinterLedger.ExchangeResult>) emitter -> {
+    public static Single<RxMinterLedger> initObserve(final RxMinterLedger dev) {
+        return Single.create(emitter -> {
+            dev.setDeviceListener(new LedgerNanoS.DeviceListener() {
+                @Override
+                public void onDeviceReady() {
+                    emitter.onSuccess(dev);
+                }
+
+                @Override
+                public void onDisconnected() {
+                    dev.stop();
+                    emitter.tryOnError(new LedgerException(LedgerNanoS.CODE_NO_CONNECTION, new IOException("Disconnected")));
+                }
+
+                @Override
+                public void onError(int code, Throwable t) {
+                    if (code == LedgerNanoS.CODE_PERMISSION_DENIED) {
+                        dev.mPermissionDeniedByUser.set(true);
+                    }
+                    emitter.tryOnError(new LedgerException(code, t));
+                }
+            });
+            try {
+                dev.init();
+            } catch (Throwable t) {
+                emitter.tryOnError(t);
+            }
+        });
+    }
+
+    public void stop() {
+        synchronized (sSearchDispLock) {
+            if (mSearchDisposable != null) {
+                mSearchDisposable.dispose();
+                mSearchDisposable = null;
+            }
+        }
+    }
+
+    public UsbDevice getDevice() {
+        return mHandle.getDevice();
+    }
+
+    public Single<MinterLedger.ExchangeResult> exchange(MinterLedger.Command command, byte[] payload) {
+        return Single
+                .create((SingleOnSubscribe<MinterLedger.ExchangeResult>) emitter -> {
                     MinterLedger.ExchangeResult result;
                     try {
                         result = mHandle.exchange(command, payload);
-                    } catch (ReadTimeoutException e) {
-                        emitter.onError(new ResponseException(e));
+                    } catch (Throwable e) {
+                        emitter.tryOnError(new ResponseException(e));
                         return;
                     }
 
                     if (result == null) {
-                        emitter.onError(new RuntimeException("Exchange result did repond nothing"));
+                        emitter.tryOnError(new ResponseException(MinterLedger.Status.EmptyResponse));
                         return;
                     } else if (result.status != MinterLedger.Status.Ok) {
-                        emitter.onError(new ResponseException(result));
+                        emitter.tryOnError(new ResponseException(result));
                         return;
                     } else if (result.data == null || result.data.size() == 0) {
-                        emitter.onError(new ResponseException(result));
+                        emitter.tryOnError(new ResponseException(result));
                         return;
                     }
 
-                    emitter.onNext(result);
-                    emitter.onComplete();
+                    if (!emitter.isDisposed()) {
+                        emitter.onSuccess(result);
+                    }
                 })
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribeOn(Schedulers.io());
     }
 
-    public Observable<SignatureSingleData> signTxHash(BytesData unsignedTxHash) {
+    public Single<SignatureSingleData> signTxHash(BytesData unsignedTxHash) {
+        return signTxHash(0, unsignedTxHash);
+    }
+
+    public Single<SignatureSingleData> signTxHash(int deriveIndex, BytesData unsignedTxHash) {
         if (unsignedTxHash.size() != 32) {
             throw new IllegalArgumentException("Transaction hash must have exact 32 bytes");
         }
 
-        return exchange(MinterLedger.Command.SignHash, unsignedTxHash.getBytes())
+        BytesData tmp = new BytesData(unsignedTxHash.size() + 4);
+        tmp.write(0, deriveIndex);
+        tmp.write(4, unsignedTxHash);
+
+        return exchange(MinterLedger.Command.SignHash, tmp.getBytes())
                 .map(result -> new SignatureSingleData(
                         result.data.takeRange(0, 32),
                         result.data.takeRange(32, 64),
@@ -128,19 +182,19 @@ public class RxMinterLedger {
                 ));
     }
 
-    public Observable<MinterAddress> getAddress() {
+    public Single<MinterAddress> getAddress() {
         return getAddress(0, false);
     }
 
-    public Observable<MinterAddress> getAddress(boolean silent) {
+    public Single<MinterAddress> getAddress(boolean silent) {
         return getAddress(0, silent);
     }
 
-    public Observable<MinterAddress> getAddress(int deriveIndex) {
+    public Single<MinterAddress> getAddress(int deriveIndex) {
         return getAddress(deriveIndex, false);
     }
 
-    public Observable<MinterAddress> getAddress(int deriveIndex, boolean silent) {
+    public Single<MinterAddress> getAddress(int deriveIndex, boolean silent) {
         BytesData payload = new BytesData(4);
         payload.write(0, deriveIndex);
 
@@ -148,7 +202,7 @@ public class RxMinterLedger {
                 .map(result -> new MinterAddress(result.data.getData()));
     }
 
-    public Observable<String> getVersion() {
+    public Single<String> getVersion() {
         return exchange(MinterLedger.Command.GetVersion, null)
                 .map(result -> {
                     char maj = result.data.at(0);
@@ -172,6 +226,7 @@ public class RxMinterLedger {
             public void onDisconnected() {
                 if (listener != null) {
                     listener.onDisconnected();
+                    stop();
                 }
             }
 
@@ -188,12 +243,9 @@ public class RxMinterLedger {
     }
 
     public void destroy() {
-        if (mSearchDisposable != null) {
-            mSearchDisposable.dispose();
-            mSearchDisposable = null;
-        }
-
+        stop();
         mHandle.destroy();
+        Timber.d("Destroy");
     }
 
     public BytesData read() throws IOException {
@@ -209,6 +261,8 @@ public class RxMinterLedger {
     }
 
     public void disconnect() {
+        stop();
         mHandle.disconnect();
+        Timber.d("Disconnect");
     }
 }

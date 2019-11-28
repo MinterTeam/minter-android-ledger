@@ -32,8 +32,11 @@ import android.hardware.usb.UsbEndpoint;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import network.minter.ledger.connector.exceptions.ConnectionException;
+import network.minter.ledger.connector.exceptions.ReadTimeoutException;
+import timber.log.Timber;
 
 
 @SuppressWarnings("RedundantThrows")
@@ -66,6 +69,42 @@ public class LedgerIO {
         return data;
     }
 
+    private AtomicBoolean mClosed = new AtomicBoolean(false);
+
+    public int readWait(byte[] out, long timeoutS) throws IOException {
+        byte[] buf = new byte[out.length];
+        final int size = Math.min(buf.length, mInEndpoint.getMaxPacketSize());
+        int bytesRead;
+        synchronized (mIOLock) {
+            bytesRead = mConnection.bulkTransfer(mInEndpoint, buf, size, READ_TIMEOUT);
+        }
+        int wait = 0;
+        int countNotNull = 0;
+        while (bytesRead == 0 || buf[0] == 0) {
+            Timber.d("Trying to read...");
+
+            try {
+                Thread.sleep(1000);
+            } catch (InterruptedException e) {
+                throw new ReadTimeoutException(e);
+            }
+            synchronized (mIOLock) {
+                bytesRead = mConnection.bulkTransfer(mInEndpoint, buf, size, READ_TIMEOUT);
+            }
+
+            wait++;
+            if (wait == timeoutS) {
+                throw new ReadTimeoutException();
+            }
+            if (mClosed.get()) {
+                throw new ConnectionException();
+            }
+        }
+        System.arraycopy(buf, 0, out, 0, buf.length);
+
+        return bytesRead;
+    }
+
     public int read(final byte[] data) throws IOException {
         final int size = Math.min(data.length, mInEndpoint.getMaxPacketSize());
         final int bytesRead;
@@ -95,5 +134,9 @@ public class LedgerIO {
 
         }
         return offset;
+    }
+
+    public void close() {
+        mClosed.set(true);
     }
 }

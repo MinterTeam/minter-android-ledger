@@ -51,15 +51,13 @@ import static android.hardware.usb.UsbManager.ACTION_USB_DEVICE_DETACHED;
 public class LedgerNanoS {
     public static final int CODE_PERMISSION_DENIED = 0x100;
     public static final int CODE_DEVICE_NO_OUTPUTS = 0x101;
-    public static final int CODE_DEVICE_CANT_OPEN = 0x102;
+    public static final int CODE_CANT_OPEN_DEVICE = 0x102;
     public static final int CODE_NO_CONNECTION = 0x103;
-    public static final int CODE_EXCHANGE_ERROR = 0x110;
-    public static final int CODE_EMPTY_RESPONSE = 0x110;
 
     public final static int NANOS_VID = 0x2c97;
     public final static int NANOS_PID = 0x0001;
     private static final String ACTION_USB_PERMISSION = "com.android.example.USB_PERMISSION";
-    protected UsbDevice mUsbDevice;
+    protected UsbDevice mDev;
     protected UsbInterface mUsbInterface;
     protected UsbEndpoint mInEndpoint;
     protected UsbEndpoint mOutEndpoint;
@@ -112,29 +110,43 @@ public class LedgerNanoS {
         mDeviceListener = listener;
     }
 
-    public synchronized void search() {
-        if (isReady()) return;
+    public boolean isConnected() {
+        return findDevice() != null;
+    }
+
+    public synchronized boolean search() {
+        if (isReady()) return true;
         Timber.i("Searching device...");
-        for (UsbDevice usbDevice : mUsbManager.get().getDeviceList().values()) {
-            if (usbDevice.getVendorId() != NANOS_VID && usbDevice.getProductId() != NANOS_PID) {
-                continue;
-            }
-
-            if (usbDevice.getInterfaceCount() > 1) {
-                continue;
-            }
-
-            if (usbDevice.getDeviceClass() == UsbConstants.USB_CLASS_PER_INTERFACE) {
-                mUsbDevice = usbDevice;
-                askPermissions();
-            } else {
-                UsbInterface usbInterface = findInterface(usbDevice);
-                if (usbInterface != null) {
-                    mUsbDevice = usbDevice;
-                    askPermissions();
-                }
-            }
+        mDev = findDevice();
+        if (mDev != null) {
+            askPermissions();
+            return true;
         }
+
+        return false;
+    }
+
+    public void disconnect() {
+        mPermissionsGranted.set(false);
+        mDeviceReady.set(false);
+
+        if (mUsbInterface != null && mConnection != null) {
+            Timber.d("Claiming interface.");
+            mConnection.releaseInterface(mUsbInterface);
+            mConnection.close();
+        }
+        if (mLedgerIO != null) {
+            mLedgerIO.close();
+            mLedgerIO = null;
+        }
+
+        if (mDeviceListener != null) {
+            mDeviceListener.onDisconnected();
+        }
+    }
+
+    public byte[] readRaw() throws IOException {
+        return mLedgerIO.read();
     }
 
     public void destroy() {
@@ -155,6 +167,22 @@ public class LedgerNanoS {
         return new BytesData(mLedgerIO.read());
     }
 
+    protected UsbDevice findDevice() {
+        if (mUsbManager == null || mUsbManager.get() == null) {
+            return null;
+        }
+
+        for (UsbDevice usbDevice : mUsbManager.get().getDeviceList().values()) {
+            if (usbDevice.getVendorId() == LedgerNanoS.NANOS_VID && usbDevice.getProductId() == LedgerNanoS.NANOS_PID) {
+                if (usbDevice.getInterfaceCount() == 1) {
+                    return usbDevice;
+                }
+            }
+        }
+
+        return null;
+    }
+
     public void write(APDU apdu) throws IOException {
         try {
             mLedgerIO.write(apdu.getData());
@@ -168,33 +196,15 @@ public class LedgerNanoS {
         return mDeviceReady.get() && mPermissionsGranted.get();
     }
 
-    public void disconnect() {
-        mPermissionsGranted.set(false);
-        mDeviceReady.set(false);
-
-        if (mUsbInterface != null && mConnection != null) {
-            Timber.d("Claiming interface.");
-            mConnection.releaseInterface(mUsbInterface);
-            mConnection.close();
-        }
-        if (mLedgerIO != null) {
-            mLedgerIO = null;
-        }
-
+    protected void notifyError(int status, Throwable t) {
         if (mDeviceListener != null) {
-            mDeviceListener.onDisconnected();
-        }
-    }
-
-    protected void notifyError(int code, Throwable t) {
-        if (mDeviceListener != null) {
-            mDeviceListener.onError(code, t);
+            mDeviceListener.onError(status, t);
         }
     }
 
     private synchronized void askPermissions() {
-        if (mUsbManager.get().hasPermission(mUsbDevice)) {
-            Timber.d("Permissions already granted for dev: %s", mUsbDevice.toString());
+        if (mDev != null && mUsbManager.get().hasPermission(mDev)) {
+            Timber.d("Permissions already granted for dev: %s", mDev.toString());
             mPermissionsGranted.set(true);
         }
 
@@ -202,9 +212,9 @@ public class LedgerNanoS {
             initUsbDevice();
         } else {
             if (mAskedPerm.get()) return;
-            Timber.d("Asking Permissions for dev: %s", mUsbDevice.toString());
+            Timber.d("Asking Permissions for dev: %s", mDev.toString());
             mAskedPerm.set(true);
-            mUsbManager.get().requestPermission(mUsbDevice, mPermissionIntent);
+            mUsbManager.get().requestPermission(mDev, mPermissionIntent);
         }
     }
 
@@ -212,7 +222,6 @@ public class LedgerNanoS {
         Timber.d("Searching for HID interface...");
         for (int nIf = 0; nIf < usbDevice.getInterfaceCount(); nIf++) {
             UsbInterface usbInterface = usbDevice.getInterface(nIf);
-            // ledger have class = 0xe0
             if (usbInterface.getInterfaceClass() == UsbConstants.USB_CLASS_HID) {
                 return usbInterface;
             }
@@ -251,15 +260,19 @@ public class LedgerNanoS {
 
     private void initUsbDevice() {
         Timber.d("Start init device");
-        // ledger specific thing, when you're opening wallet app, it creates only 1 app interface
-        if (mUsbDevice.getInterfaceCount() > 1) {
-            return;
+        if (mDev == null) {
+            mDev = findDevice();
+            if (mDev == null) {
+                notifyError(CODE_CANT_OPEN_DEVICE, null);
+                return;
+            } else {
+                mPermissionsGranted.set(false);
+                mAskedPerm.set(false);
+                askPermissions();
+                return;
+            }
         }
-        mUsbInterface = findInterface(mUsbDevice);
-        if (mUsbInterface == null) {
-            Timber.d("Device does not have any HID interfaced");
-            mUsbInterface = mUsbDevice.getInterface(0);
-        }
+        mUsbInterface = mDev.getInterface(0);
 
         for (int nEp = 0; nEp < mUsbInterface.getEndpointCount(); nEp++) {
             UsbEndpoint tmpEndpoint = mUsbInterface.getEndpoint(nEp);
@@ -276,10 +289,10 @@ public class LedgerNanoS {
             notifyError(CODE_DEVICE_NO_OUTPUTS, null);
             Timber.e("No output endpoints");
         }
-        mConnection = mUsbManager.get().openDevice(mUsbDevice);
+        mConnection = mUsbManager.get().openDevice(mDev);
         if (mConnection == null) {
             Timber.e("Can't open device");
-            notifyError(CODE_DEVICE_CANT_OPEN, null);
+            notifyError(CODE_CANT_OPEN_DEVICE, null);
             return;
         }
         Timber.d("Claiming interface.");

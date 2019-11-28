@@ -1,6 +1,7 @@
 Minter Ledger Nano S SDK for Android
 ====================================
 [![Download](https://api.bintray.com/packages/minterteam/android/ledger-connector/images/download.svg) ](https://bintray.com/minterteam/android/ledger-connector/_latestVersion)
+[![Download RxJava2 Adapter](https://api.bintray.com/packages/minterteam/android/ledger-rxjava2-connector/images/download.svg) ](https://bintray.com/minterteam/android/ledger-rxjava2-connector/_latestVersion)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Setup
@@ -57,10 +58,11 @@ import network.minter.ledger.connector.*;
 
 class MainActivity extends AppCompatActivity {
     private MinterLedger mDevice;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         UsbManager usb = (UsbManager) getSystemService(Context.USB_SERVICE);
-        mDevice = new MinterLedget(/*Context*/ this, /*UsbManager*/ usb);
+        mDevice = new MinterLedger(/*Context*/ this, /*UsbManager*/ usb);
         
         mDevice.setDeviceListener(new LedgerNanoS.DeviceListener() {
                           @Override
@@ -80,6 +82,7 @@ class MainActivity extends AppCompatActivity {
                           public void onDisconnected() {
                               // device disconnected
                               // do search again
+                              // again: do this in separate thread, or UI will freeze
                               while(!mDevice.isReady()) {
                                   mDevice.search();    
                               }

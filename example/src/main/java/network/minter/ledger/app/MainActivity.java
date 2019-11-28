@@ -27,6 +27,7 @@
 package network.minter.ledger.app;
 
 import android.annotation.SuppressLint;
+import android.app.ProgressDialog;
 import android.content.Context;
 import android.hardware.usb.UsbManager;
 import android.os.Bundle;
@@ -37,7 +38,10 @@ import android.widget.TextView;
 
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
+import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.disposables.Disposable;
+import io.reactivex.schedulers.Schedulers;
+import network.minter.core.crypto.BytesData;
 import network.minter.ledger.connector.LedgerNanoS;
 import network.minter.ledger.connector.MinterLedger;
 import network.minter.ledger.connector.rxjava2.RxMinterLedger;
@@ -50,6 +54,7 @@ public class MainActivity extends AppCompatActivity {
     private NonFocusingScrollView mScrollView;
     private Button actionGetVersion;
     private Button actionGetAddress;
+    private Button actionSign;
     private RxMinterLedger mDevice;
     private Disposable mActionDisp;
 
@@ -68,7 +73,8 @@ public class MainActivity extends AppCompatActivity {
 
         actionGetVersion = findViewById(R.id.btnGetVersion);
         actionGetAddress = findViewById(R.id.btnGetAddress);
-        enableActions(false);
+        actionSign = findViewById(R.id.btnSign);
+        enableActions(true);
 
         mDevice = new RxMinterLedger(this, (UsbManager) getSystemService(Context.USB_SERVICE));
         mDevice.setDeviceListener(new LedgerNanoS.DeviceListener() {
@@ -113,7 +119,7 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        searchNanoS();
+//        searchNanoS();
     }
 
     @Override
@@ -135,19 +141,21 @@ public class MainActivity extends AppCompatActivity {
     private void enableActions(boolean enable) {
         actionGetVersion.setEnabled(enable);
         actionGetAddress.setEnabled(enable);
+        actionSign.setEnabled(enable);
 
         if (enable) {
             actionGetVersion.setOnClickListener(runAction(MinterLedger.Command.GetVersion));
             actionGetAddress.setOnClickListener(runAction(MinterLedger.Command.GetAddress));
+            actionSign.setOnClickListener(runAction(MinterLedger.Command.SignHash));
         }
     }
 
     private View.OnClickListener runAction(MinterLedger.Command command) {
         return v -> {
-            if (!mDevice.isReady()) {
-                appendResult("Device did not initialized yet");
-                return;
-            }
+//            if (!mDevice.isReady()) {
+//                appendResult("Device did not initialized yet");
+//                return;
+//            }
             if (command == MinterLedger.Command.GetVersion) {
                 mActionDisp = mDevice.getVersion()
                         .subscribe(res -> {
@@ -158,9 +166,58 @@ public class MainActivity extends AppCompatActivity {
                             appendResult(t.getMessage());
                         });
             } else if (command == MinterLedger.Command.GetAddress) {
-                mActionDisp = mDevice.getAddress()
+                RxMinterLedger ledger = new RxMinterLedger(this, ((UsbManager) getSystemService(USB_SERVICE)));
+                if (!ledger.isReady()) {
+                    appendResult("Connecting...");
+                }
+
+                final android.app.AlertDialog dialog = new ProgressDialog.Builder(this)
+                        .setTitle("Getting address")
+                        .setMessage("Connecting...")
+                        .setPositiveButton("Cancel", (d, w) -> {
+                            Timber.d("Cancel request");
+                            mActionDisp.dispose();
+                            d.dismiss();
+                        })
+                        .setOnDismissListener(dialog1 -> {
+                            Timber.d("Cancel request");
+                            mActionDisp.dispose();
+                        })
+                        .create();
+
+                mActionDisp = RxMinterLedger.initObserve(ledger)
+                        .flatMap(dev -> {
+                            dialog.setMessage("Connected!");
+                            return dev.getAddress(false);
+                        })
+                        .doFinally(ledger::destroy)
+                        .observeOn(AndroidSchedulers.mainThread())
+                        .subscribeOn(Schedulers.io())
                         .subscribe(res -> {
-                            Timber.d("GetAddress[0] response: %s", res.toString());
+                            appendResult(res.toString());
+                            dialog.dismiss();
+                            new AlertDialog.Builder(MainActivity.this)
+                                    .setTitle("Address")
+                                    .setMessage(res.toString())
+                                    .setPositiveButton("Ok", (d, w) -> d.dismiss())
+                                    .create()
+                                    .show();
+                        }, t -> {
+                            dialog.dismiss();
+                            new AlertDialog.Builder(MainActivity.this)
+                                    .setTitle("Error")
+                                    .setMessage(t.getMessage())
+                                    .setPositiveButton("Close", (d, w) -> d.dismiss())
+                                    .create()
+                                    .show();
+                        });
+
+                dialog.show();
+            } else if (command == MinterLedger.Command.SignHash) {
+                BytesData hash = new BytesData("1ee24f115b579f0f1ba7278515f8c438c2da201dc37fa44c2d9f431d94a9693e");
+                mActionDisp = mDevice.signTxHash(hash)
+                        .subscribe(res -> {
+                            Timber.d("SignHash[0] response: %s %s %s", res.getR(), res.getS(), res.getV());
                             appendResult(res.toString());
                         }, t -> {
                             Timber.e(t);

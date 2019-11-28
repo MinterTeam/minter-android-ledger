@@ -24,7 +24,7 @@
  * THE SOFTWARE.
  */
 
-package network.minter.ledger.connector.rxjava2;
+package network.minter.ledger.connector.exceptions;
 
 import java.io.IOException;
 
@@ -32,9 +32,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import network.minter.core.crypto.BytesData;
 import network.minter.ledger.connector.MinterLedger;
-import network.minter.ledger.connector.exceptions.ConnectionException;
-import network.minter.ledger.connector.exceptions.EmptyResponseException;
-import network.minter.ledger.connector.exceptions.ReadTimeoutException;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
 
@@ -46,14 +43,15 @@ public class ResponseException extends IOException {
         super(cause);
         if (getCause() instanceof ReadTimeoutException) {
             mResult = new MinterLedger.ExchangeResult(MinterLedger.Status.ReadTimeout);
-        } else if (getCause() instanceof EmptyResponseException) {
-            mResult = new MinterLedger.ExchangeResult(MinterLedger.Status.EmptyResponse);
         } else if (getCause() instanceof ConnectionException) {
             mMessage = "Connection to Nano S lost";
             mResult = new MinterLedger.ExchangeResult(MinterLedger.Status.ConnectionLost);
         } else if (getCause() instanceof IOException) {
             mMessage = getCause().getMessage();
             mResult = new MinterLedger.ExchangeResult(MinterLedger.Status.CommonIOError);
+        } else if (getCause() instanceof InterruptedException) {
+            mMessage = getCause().getMessage();
+            mResult = new MinterLedger.ExchangeResult(MinterLedger.Status.Canceled);
         } else if (getCause() != null) {
             mMessage = getCause().getMessage();
             mResult = new MinterLedger.ExchangeResult(MinterLedger.Status.Unknown);
@@ -64,8 +62,15 @@ public class ResponseException extends IOException {
         mResult = result;
     }
 
+    public ResponseException(MinterLedger.Status statusCode, Throwable cause) {
+        super(cause);
+        mResult = new MinterLedger.ExchangeResult();
+        mResult.status = statusCode;
+    }
+
     public ResponseException(MinterLedger.Status status) {
         mResult = new MinterLedger.ExchangeResult();
+        mResult.status = status;
     }
 
     public MinterLedger.Status getStatus() {

@@ -26,7 +26,28 @@
 
 package network.minter.ledger.connector.exceptions;
 
-import java.io.IOException;
+public class LedgerException extends Exception {
+    private int mCode = -1;
 
-public class EmptyResponseException extends IOException {
+    public LedgerException() {
+    }
+
+    public LedgerException(int code, String message) {
+        super(message);
+        mCode = code;
+    }
+
+    public LedgerException(int code, String message, Throwable cause) {
+        super(message, cause);
+        mCode = code;
+    }
+
+    public LedgerException(int code, Throwable cause) {
+        super(cause);
+        mCode = code;
+    }
+
+    public int getCode() {
+        return mCode;
+    }
 }
