@@ -35,8 +35,13 @@ If you're using RxJava2, there is adapter:
 dependencies {
     // base
     implementation "network.minter.android:ledger-connector:${minterLedgerSDK}"
+    // for multi-configuration, testnet version
+    implementation "network.minter.android:ledger-connector-testnet:${minterLedgerSDK}"
+
     // adapter
     implementation "network.minter.android:ledger-rxjava2-connector:${minterLedgerSDK}"
+    // the same
+    implementation "network.minter.android:ledger-rxjava2-connector-testnet:${minterLedgerSDK}"
     
     //rxjava2 (see actual version at official repo)
     implementation 'io.reactivex.rxjava2:rxjava:2.2.10'

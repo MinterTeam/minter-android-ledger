@@ -200,9 +200,37 @@ ${gradlePath} \
     -PbuildArtifactName=${artifactName} \
     -PbuildArtifactGroup="${artifactGroup}" \
     -PbuildArtifactVersion="${artifactVersion}" \
-    ${moduleNameGradle}:assemble${flavorCap} \
-    ${moduleNameGradle}:androidSources \
+    ${moduleNameGradle}:assemble${flavorCap}
+
+${gradlePath} \
+    -PbuildFlavor=${flavor} \
+    -PartifactSuffix=${artifactSuffix} \
+    -PbuildArtifactName=${artifactName} \
+    -PbuildArtifactGroup="${artifactGroup}" \
+    -PbuildArtifactVersion="${artifactVersion}" \
+    ${moduleNameGradle}:androidSources
+
+${gradlePath} \
+    -PbuildFlavor=${flavor} \
+    -PartifactSuffix=${artifactSuffix} \
+    -PbuildArtifactName=${artifactName} \
+    -PbuildArtifactGroup="${artifactGroup}" \
+    -PbuildArtifactVersion="${artifactVersion}" \
     ${moduleNameGradle}:androidJavadoc \
+
+${gradlePath} \
+    -PbuildFlavor=${flavor} \
+    -PartifactSuffix=${artifactSuffix} \
+    -PbuildArtifactName=${artifactName} \
+    -PbuildArtifactGroup="${artifactGroup}" \
+    -PbuildArtifactVersion="${artifactVersion}" \
     ${moduleNameGradle}:androidJavadocJar \
+
+${gradlePath} \
+    -PbuildFlavor=${flavor} \
+    -PartifactSuffix=${artifactSuffix} \
+    -PbuildArtifactName=${artifactName} \
+    -PbuildArtifactGroup="${artifactGroup}" \
+    -PbuildArtifactVersion="${artifactVersion}" \
     ${moduleNameGradle}:generatePomFileFor${flavorCap}${projectNameCap}${artifactSuffixPom}Publication \
     ${publishTypeInternal} ${publishTypeAdditions} ${verbosity} ${additionalArgs}
