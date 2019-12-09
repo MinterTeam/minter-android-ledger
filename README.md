@@ -1,7 +1,7 @@
 Minter Ledger Nano S SDK for Android
 ====================================
-[![Download](https://api.bintray.com/packages/minterteam/android/ledger-connector/images/download.svg) ](https://bintray.com/minterteam/android/ledger-connector/_latestVersion)
-[![Download RxJava2 Adapter](https://api.bintray.com/packages/minterteam/android/ledger-rxjava2-connector/images/download.svg) ](https://bintray.com/minterteam/android/ledger-rxjava2-connector/_latestVersion)
+[![Download](https://img.shields.io/bintray/v/minterteam/android/ledger-connector?label=Download) ](https://bintray.com/minterteam/android/ledger-connector/_latestVersion)
+[![Download RxJava2 Adapter](https://img.shields.io/bintray/v/minterteam/android/ledger-rxjava2-connector?label=Download%20RxJava2-Adapter) ](https://bintray.com/minterteam/android/ledger-rxjava2-connector/_latestVersion)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 ## Setup
